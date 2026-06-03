@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>akari — your personal astrologer</title>
+<meta name="theme-color" content="#09070f"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="akari"/>
+<link rel="manifest" href="manifest.json"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#09070f}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+// ── REPLACE THIS WITH YOUR API KEY FOR AI READINGS ──
+const ANTHROPIC_API_KEY = "";
+
+const toRad = d => d * Math.PI / 180;
+const toDeg = r => r * 180 / Math.PI;
+const norm360 = x => ((x % 360) + 360) % 360;
+
+function julianDay(year, month, day, hourUTC) {
+  let y = year, m = month;
+  if (m <= 2) { y--; m += 12; }
+  const A = Math.floor(y / 100), B = 2 - A + Math.floor(A / 4);
+  return Math.floor(365.25*(y+4716)) + Math.floor(30.6001*(m+1)) + day + hourUTC/24 + B - 1524.5;
+}
+
+function keplerE(M, e) {
+  let E = M;
+  for (let i = 0; i < 20; i++) {
+    const dE = (M - E + e*Math.sin(E)) / (1 - e*Math.cos(E));
+    E += dE;
+    if (Math.abs(dE) < 1e-10) break;
+  }
+  return E;
+}
+
+function computeChart(year, month, day, hourUTC, lat, lon) {
+  const JD = julianDay(year, month, day, hourUTC);
+  const T  = (JD - 2451545) / 36525;
+  const Ms = norm360(357.52911 + 35999.05029*T - 0.0001537*T*T);
+  const Ls = norm360(280.46646 + 36000.76983*T);
+  const sunLon = norm360(Ls + (1.914602-0.004817*T)*Math.sin(toRad(Ms)) + 0.019993*Math.sin(toRad(2*Ms)) + 0.000289*Math.sin(toRad(3*Ms)));
+  const Re = 1.00014 - 0.01671*Math.cos(toRad(Ms)) - 0.00014*Math.cos(toRad(2*Ms));
+  const Ex = Re*Math.cos(toRad(sunLon+180)), Ey = Re*Math.sin(toRad(sunLon+180));
+  const geo = (x,y) => norm360(toDeg(Math.atan2(y-Ey, x-Ex)));
+  function planet(a,e,I,lp,Om,L) {
+    const Or=toRad(Om), Ir=toRad(I), wr=toRad(lp-Om), M=norm360(L-lp);
+    const E=keplerE(toRad(M),e), v=2*Math.atan2(Math.sqrt(1+e)*Math.sin(E/2),Math.sqrt(1-e)*Math.cos(E/2));
+    const r=a*(1-e*Math.cos(E)), u=v+wr;
+    return geo(r*(Math.cos(Or)*Math.cos(u)-Math.sin(Or)*Math.sin(u)*Math.cos(Ir)), r*(Math.sin(Or)*Math.cos(u)+Math.cos(Or)*Math.sin(u)*Math.cos(Ir)));
+  }
+  const Lm=norm360(218.3165+481267.8813*T), Mm=norm360(134.9634+477198.8676*T);
+  const D=norm360(297.8502+445267.1115*T), F=norm360(93.2721+483202.0175*T);
+  const moonLon=norm360(Lm+6.2888*Math.sin(toRad(Mm))+1.274*Math.sin(toRad(2*D-Mm))+0.6583*Math.sin(toRad(2*D))+0.2136*Math.sin(toRad(2*Mm))-0.1851*Math.sin(toRad(D))+0.1144*Math.sin(toRad(2*F))+0.0588*Math.sin(toRad(2*D-2*Mm)));
+  const mercLon=planet(0.387098,0.205635+0.000020*T,7.004986-0.0059516*T,77.456119+0.1588643*T,48.330893+1.1861883*T,norm360(252.250906+149472.6746358*T));
+  const venLon=planet(0.723330,0.006773-0.000014*T,3.394662-0.0008568*T,131.563703+0.0048746*T,76.679920+0.9011206*T,norm360(181.979801+58517.815676*T));
+  const marLon=planet(1.523688,0.093405+0.000092*T,1.849726-0.0081477*T,336.060234+0.4439016*T,49.557854+0.7720959*T,norm360(355.433275+19140.2993313*T));
+  const jupLon=planet(5.202561,0.048498+0.000163*T,1.303270-0.0019877*T,14.331309+0.2155525*T,100.464407+1.0209774*T,norm360(34.351519+3034.9056606*T));
+  const satLon=planet(9.537070,0.055546-0.000346*T,2.488900-0.0037140*T,93.056787+0.5665496*T,113.665503+0.8770880*T,norm360(50.077444+1222.1138488*T));
+  const urLon=planet(19.191264,0.047318+0.000745*T,0.773197-0.0016869*T,173.005159+1.4863784*T,74.005957+0.5211278*T,norm360(314.055005+428.4669983*T));
+  const nepLon=planet(30.068963,0.008606+0.000215*T,1.769953+0.0002256*T,48.123691+1.4262677*T,131.784057+1.1022039*T,norm360(304.348665+218.4862002*T));
+  const pluLon=norm360(238.929+144.96*T);
+  const eps=toRad(23.4393-0.013*T), GMST=norm360(280.46061837+360.98564736629*(JD-2451545));
+  const LST=norm360(GMST+lon), RAMC=toRad(LST), latR=toRad(lat);
+  let ascRad=Math.atan2(Math.cos(RAMC),-(Math.sin(RAMC)*Math.cos(eps)+Math.tan(latR)*Math.sin(eps)));
+  let asc=norm360(toDeg(ascRad));
+  if(Math.cos(RAMC)<0) asc=norm360(asc+180);
+  const mc=norm360(toDeg(Math.atan2(Math.sin(RAMC),Math.cos(RAMC)*Math.cos(eps)-Math.tan(latR)*Math.sin(eps))));
+  return [
+    {key:"sun",name:"Sun",sym:"☉",lon:sunLon,color:"#f0c040"},
+    {key:"moon",name:"Moon",sym:"☽",lon:moonLon,color:"#d0ccf0"},
+    {key:"mercury",name:"Mercury",sym:"☿",lon:mercLon,color:"#90b8d0"},
+    {key:"venus",name:"Venus",sym:"♀",lon:venLon,color:"#e890b8"},
+    {key:"mars",name:"Mars",sym:"♂",lon:marLon,color:"#e06050"},
+    {key:"jupiter",name:"Jupiter",sym:"♃",lon:jupLon,color:"#e0b870"},
+    {key:"saturn",name:"Saturn",sym:"♄",lon:satLon,color:"#b0a080"},
+    {key:"uranus",name:"Uranus",sym:"⛢",lon:urLon,color:"#60d0d0"},
+    {key:"neptune",name:"Neptune",sym:"♆",lon:nepLon,color:"#6080e0"},
+    {key:"pluto",name:"Pluto",sym:"♇",lon:pluLon,color:"#906080"},
+    {key:"asc",name:"ASC",sym:"↑",lon:asc,color:"#c8a96e",isAngle:true},
+    {key:"mc",name:"MC",sym:"↑",lon:mc,color:"#a87848",isAngle:true},
+  ];
+}
+
+const SIGN_NAMES=["Aries","Taurus","Gemini","Cancer","Leo","Virgo","Libra","Scorpio","Sagittarius","Capricorn","Aquarius","Pisces"];
+function signOf(lon){return{sign:SIGN_NAMES[Math.floor(lon/30)],deg:parseFloat((lon%30).toFixed(1))};}
+
+function getAspects(p1list,p2list,orb=8){
+  const ASPECTS=[
+    {name:"Conjunction",short:"☌",angle:0,orb:8,nature:"intense"},
+    {name:"Sextile",short:"⚹",angle:60,orb:6,nature:"harmonious"},
+    {name:"Square",short:"□",angle:90,orb:7,nature:"tense"},
+    {name:"Trine",short:"△",angle:120,orb:8,nature:"harmonious"},
+    {name:"Opposition",short:"☍",angle:180,orb:8,nature:"tense"},
+  ];
+  const results=[];
+  p1list.filter(p=>!p.isAngle).forEach(p1=>{
+    p2list.filter(p=>!p.isAngle).forEach(p2=>{
+      if(p1.key===p2.key)return;
+      const diff=Math.abs(norm360(p1.lon-p2.lon)), angle=diff>180?360-diff:diff;
+      ASPECTS.forEach(asp=>{if(Math.abs(angle-asp.angle)<=asp.orb)results.push({p1,p2,aspect:asp,orb:Math.abs(angle-asp.angle).toFixed(1)});});
+    });
+  });
+  return results;
+}
+
+const SIGNS=[
+  {name:"Aries",sym:"♈",dates:"Mar 21–Apr 19",el:"Fire",ruler:"Mars",color:"#e85d4a",mod:"Cardinal"},
+  {name:"Taurus",sym:"♉",dates:"Apr 20–May 20",el:"Earth",ruler:"Venus",color:"#7dab6e",mod:"Fixed"},
+  {name:"Gemini",sym:"♊",dates:"May 21–Jun 20",el:"Air",ruler:"Mercury",color:"#d4b840",mod:"Mutable"},
+  {name:"Cancer",sym:"♋",dates:"Jun 21–Jul 22",el:"Water",ruler:"Moon",color:"#7ab8d4",mod:"Cardinal"},
+  {name:"Leo",sym:"♌",dates:"Jul 23–Aug 22",el:"Fire",ruler:"Sun",color:"#e89040",mod:"Fixed"},
+  {name:"Virgo",sym:"♍",dates:"Aug 23–Sep 22",el:"Earth",ruler:"Mercury",color:"#98c078",mod:"Mutable"},
+  {name:"Libra",sym:"♎",dates:"Sep 23–Oct 22",el:"Air",ruler:"Venus",color:"#d4a0d0",mod:"Cardinal"},
+  {name:"Scorpio",sym:"♏",dates:"Oct 23–Nov 21",el:"Water",ruler:"Pluto",color:"#8b4a6e",mod:"Fixed"},
+  {name:"Sagittarius",sym:"♐",dates:"Nov 22–Dec 21",el:"Fire",ruler:"Jupiter",color:"#c87840",mod:"Mutable"},
+  {name:"Capricorn",sym:"♑",dates:"Dec 22–Jan 19",el:"Earth",ruler:"Saturn",color:"#7a8a9a",mod:"Cardinal"},
+  {name:"Aquarius",sym:"♒",dates:"Jan 20–Feb 18",el:"Air",ruler:"Uranus",color:"#60a8d4",mod:"Fixed"},
+  {name:"Pisces",sym:"♓",dates:"Feb 19–Mar 20",el:"Water",ruler:"Neptune",color:"#9080d0",mod:"Mutable"},
+];
+
+const TRANSIT_EVENTS=[
+  {date:"Jun 3",planet:"☽ Moon",event:"in Capricorn",intensity:"minor",note:"A quiet, disciplined current. Let ambition settle like sediment — it clarifies here."},
+  {date:"Jun 5",planet:"☽ Moon",event:"enters Aquarius",intensity:"minor",note:"The heart lifts toward the collective. Zoom out. What do you see from a distance?"},
+  {date:"Jun 7",planet:"☽ Moon",event:"enters Pisces",intensity:"minor",note:"The veil softens. Creative and spiritual work flows more easily now."},
+  {date:"Jun 9",planet:"☿ Mercury",event:"trine Pluto",intensity:"moderate",note:"Words carry depth today. You can ask the question you've been circling."},
+  {date:"Jun 11",planet:"☽ Moon",event:"enters Aries",intensity:"minor",note:"A spark. First instincts are worth trusting — don't deliberate them away."},
+  {date:"Jun 17",planet:"♀ Venus",event:"enters Libra",intensity:"major",note:"Venus is home. Bonds deepen, beauty sharpens, fairness becomes a felt need."},
+  {date:"Jun 21",planet:"☉ Sun",event:"enters Cancer",intensity:"major",note:"Solstice turning. The light tilts inward — home, memory, and belonging call."},
+  {date:"Jun 24",planet:"♄ Saturn",event:"square Pluto (exact)",intensity:"major",note:"Old structures face their test. Build only on what is truly solid."},
+  {date:"Jun 28",planet:"☽ Moon",event:"Full Moon Capricorn",intensity:"major",note:"Whatever you've been building since winter ripens — or releases — now."},
+  {date:"Jul 2",planet:"♃ Jupiter",event:"square Neptune",intensity:"major",note:"Vision without ground evaporates. Let the dream be real before you expand it."},
+];
+
+function seededRand(seed){const x=Math.sin(seed+1)*10000;return x-Math.floor(x);}
+function getRatings(signIdx,transits){
+  const d=new Date(),b=d.getDate()+d.getMonth()*31+signIdx;
+  const inSign=transits?transits.filter(p=>!p.isAngle&&signOf(p.lon).sign===SIGNS[signIdx].name).length:0;
+  return{Love:Math.min(10,Math.floor(seededRand(b+1)*4)+5+(inSign>0?1:0)),Career:Math.min(10,Math.floor(seededRand(b+2)*4)+5),Energy:Math.min(10,Math.floor(seededRand(b+3)*4)+5+(inSign>1?1:0)),Luck:Math.min(10,Math.floor(seededRand(b+4)*3)+5)};
+}
+
+const ASPECT_COLORS={Conjunction:"#e8c46a",Sextile:"#5ab8a0",Square:"#e06060",Trine:"#6090e0",Opposition:"#c060c0"};
+
+function ChartWheel({transitPlanets,natalPlanets,highlightSign,mode="transit"}){
+  const cx=155,cy=155;
+  const R={outer:138,signBand:118,transit:90,natal:65,inner:44};
+  const ascP=transitPlanets?.find(p=>p.key==="asc");
+  const offset=ascP?ascP.lon+180:0;
+  const lonToAngle=lon=>toRad(norm360(lon-offset+180)-90);
+  function spreadPlanets(ps,r){
+    const sorted=[...ps].filter(p=>!p.isAngle).sort((a,b)=>a.lon-b.lon);
+    return sorted.map((p,i)=>{const prev=sorted[i-1];return{...p,_r:(prev&&norm360(p.lon-prev.lon)<7)?r-14:r};});
+  }
+  const tSpread=transitPlanets?spreadPlanets(transitPlanets,R.transit):[];
+  const nSpread=natalPlanets?spreadPlanets(natalPlanets,R.natal):[];
+  const wheelAspects=transitPlanets?getAspects(transitPlanets,transitPlanets,5).filter((a,i,arr)=>arr.findIndex(b=>b.p1.key===a.p2.key&&b.p2.key===a.p1.key&&b.aspect.name===a.aspect.name)>i?false:true).sort((a,b)=>parseFloat(a.orb)-parseFloat(b.orb)).slice(0,8):[];
+  const dualAspects=(mode==="both"&&natalPlanets&&transitPlanets)?getAspects(transitPlanets,natalPlanets,5).slice(0,6):[];
+  const presentTypes=[...new Set(wheelAspects.map(a=>a.aspect.name))];
+  return(
+    <svg viewBox="0 0 310 330" style={{width:"100%",maxWidth:340}}>
+      <defs>
+        <radialGradient id="cwbg" cx="50%" cy="50%"><stop offset="0%" stopColor="#130f1e"/><stop offset="100%" stopColor="#080610"/></radialGradient>
+        <filter id="glow"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        <filter id="softglow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+      <circle cx={cx} cy={cy} r={150} fill="url(#cwbg)"/>
+      {Array.from({length:12}).map((_,i)=>{const a=toRad(norm360(i*30-offset+180)-90),isCard=i%3===0;return<line key={i} x1={cx+R.inner*Math.cos(a)} y1={cy+R.inner*Math.sin(a)} x2={cx+R.outer*Math.cos(a)} y2={cy+R.outer*Math.sin(a)} stroke={isCard?"#3a3060":"#1c1830"} strokeWidth={isCard?1.2:0.5}/>;})}
+      <circle cx={cx} cy={cy} r={R.outer} fill="none" stroke="#2a2050" strokeWidth="1.5"/>
+      <circle cx={cx} cy={cy} r={R.signBand} fill="none" stroke="#1a1540" strokeWidth="0.7"/>
+      <circle cx={cx} cy={cy} r={R.transit} fill="none" stroke="#1e1835" strokeWidth="0.8"/>
+      {mode==="both"&&<circle cx={cx} cy={cy} r={R.natal} fill="none" stroke="#2a1840" strokeWidth="0.7" strokeDasharray="3,2"/>}
+      <circle cx={cx} cy={cy} r={R.inner} fill="#09070f" stroke="#1a1530" strokeWidth="1"/>
+      {SIGNS.map((s,i)=>{const a=toRad(norm360(i*30+15-offset+180)-90),r=(R.signBand+R.outer)/2,x=cx+r*Math.cos(a),y=cy+r*Math.sin(a),hi=s.name===highlightSign;return<g key={i}>{hi&&<circle cx={x} cy={y} r={12} fill={s.color} opacity="0.2"/>}<text x={x} y={y} textAnchor="middle" dominantBaseline="middle" fontSize={hi?13:10} fill={hi?s.color:s.color+"70"} fontFamily="serif" filter={hi?"url(#glow)":""}>{s.sym}</text></g>;})}
+      {(()=>{const posMap={};tSpread.forEach(p=>{const a=lonToAngle(p.lon);posMap[p.key]={x:cx+p._r*Math.cos(a),y:cy+p._r*Math.sin(a)};});return wheelAspects.map((asp,i)=>{const p1pos=posMap[asp.p1.key],p2pos=posMap[asp.p2.key];if(!p1pos||!p2pos)return null;const col=ASPECT_COLORS[asp.aspect.name]||"#888",tight=parseFloat(asp.orb)<2,isDash=asp.aspect.name==="Square"||asp.aspect.name==="Opposition",dx=p2pos.x-p1pos.x,dy=p2pos.y-p1pos.y,dist=Math.sqrt(dx*dx+dy*dy)||1,nx=dx/dist,ny=dy/dist,r=7.5;return<line key={i} x1={p1pos.x+nx*r} y1={p1pos.y+ny*r} x2={p2pos.x-nx*r} y2={p2pos.y-ny*r} stroke={col} strokeWidth={tight?1.1:0.65} opacity={tight?0.7:0.4} strokeDasharray={isDash?"4,3":"none"}/>;});})()}
+      {dualAspects.map((asp,i)=>{const a1=lonToAngle(asp.p1.lon),a2=lonToAngle(asp.p2.lon),col=asp.aspect.nature==="harmonious"?"#4a8a6a":"#8a4a4a";return<line key={"d"+i} x1={cx+R.natal*Math.cos(a1)} y1={cy+R.natal*Math.sin(a1)} x2={cx+R.natal*Math.cos(a2)} y2={cy+R.natal*Math.sin(a2)} stroke={col} strokeWidth="0.5" opacity="0.3" strokeDasharray={asp.aspect.nature==="tense"?"4,3":"none"}/>;}) }
+      {tSpread.map((p,i)=>{const a=lonToAngle(p.lon),x=cx+p._r*Math.cos(a),y=cy+p._r*Math.sin(a),hi=highlightSign&&signOf(p.lon).sign===highlightSign;return<g key={i}>{hi&&<circle cx={x} cy={y} r={10} fill={p.color} opacity="0.18"/>}<circle cx={x} cy={y} r={7} fill="#0d0a18" stroke={p.color} strokeWidth={hi?1.8:1.1} filter={hi?"url(#softglow)":""}/><text x={x} y={y} textAnchor="middle" dominantBaseline="middle" fontSize="5.8" fill={p.color} fontFamily="serif">{p.sym}</text></g>;})}
+      {mode==="both"&&nSpread.map((p,i)=>{const a=lonToAngle(p.lon),x=cx+p._r*Math.cos(a),y=cy+p._r*Math.sin(a);return<g key={"n"+i}><circle cx={x} cy={y} r={5.5} fill="#0d0a18" stroke={p.color} strokeWidth="1" opacity="0.7"/><text x={x} y={y} textAnchor="middle" dominantBaseline="middle" fontSize="4.5" fill={p.color} opacity="0.8" fontFamily="serif">{p.sym}</text></g>;})}
+      {ascP&&(()=>{const a=lonToAngle(ascP.lon),x2=cx+R.outer*Math.cos(a),y2=cy+R.outer*Math.sin(a),xi=cx+R.inner*Math.cos(a),yi=cy+R.inner*Math.sin(a);return<g><line x1={xi} y1={yi} x2={x2} y2={y2} stroke="#c8a96e" strokeWidth="1" strokeDasharray="4,2" opacity="0.6"/><text x={x2+(x2>cx?6:-6)} y={y2} textAnchor={x2>cx?"start":"end"} dominantBaseline="middle" fontSize="7" fill="#c8a96e" fontFamily="serif">ASC</text></g>;})()}
+      <circle cx={cx} cy={cy} r={5} fill="#c8a96e" opacity="0.25"/>
+      <circle cx={cx} cy={cy} r={2.5} fill="#c8a96e" opacity="0.6"/>
+      {mode==="both"&&<text x={cx} y={cy+18} textAnchor="middle" fontSize="6" fill="#4a3a6a" fontFamily="serif">natal · inner · transit · outer</text>}
+      {presentTypes.length>0&&(()=>{const items=presentTypes.map(name=>({name,col:ASPECT_COLORS[name]})),spacing=310/(items.length+1);return<g transform="translate(0,315)">{items.map((it,i)=>{const x=spacing*(i+1),isDash=it.name==="Square"||it.name==="Opposition";return<g key={it.name}><line x1={x-14} y1={0} x2={x+14} y2={0} stroke={it.col} strokeWidth="1.2" opacity="0.7" strokeDasharray={isDash?"4,2":"none"}/><text x={x} y={10} textAnchor="middle" fontSize="6" fill={it.col} opacity="0.7" fontFamily="serif">{it.name}</text></g>;})}</g>;})()}
+    </svg>
+  );
+}
+
+function RatingBar({label,value}){return(<div style={{marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontSize:10,color:"#7a6a9a",letterSpacing:"0.12em",textTransform:"uppercase",fontFamily:"'Courier New',monospace"}}>{label}</span><span style={{fontSize:10,color:"#c8a96e",fontFamily:"'Courier New',monospace"}}>{value}/10</span></div><div style={{height:2,background:"#1a1530",borderRadius:2}}><div style={{height:"100%",width:`${value*10}%`,borderRadius:2,background:"linear-gradient(90deg,#5a3a8a,#c8a96e)",transition:"width 1.2s ease"}}/></div></div>);}
+
+const ASPECT_MEANINGS={Conjunction:{desc:"Two planets merge — amplified, inseparable.",nature:"Can be focused and creative, or overwhelming if energies conflict."},Sextile:{desc:"A gentle, cooperative flow. Opportunity knocks softly.",nature:"Supportive. The two planets offer each other easy assistance."},Square:{desc:"Friction and tension. They pull in different directions.",nature:"Challenging but motivating. Can drive growth if worked with consciously."},Trine:{desc:"Effortless harmony. Energy flows freely.",nature:"The most graceful aspect. Both planets at their best."},Opposition:{desc:"Two planets face each other. Awareness, projection, either/or choices.",nature:"Integration — holding both — is the work."}};
+const PLANET_KEYWORDS={Sun:"identity, vitality, purpose",Moon:"emotions, instinct, inner life",Mercury:"thought, communication, perception",Venus:"love, beauty, values",Mars:"drive, desire, action",Jupiter:"expansion, faith, abundance",Saturn:"discipline, limits, structure",Uranus:"disruption, freedom, change",Neptune:"dreams, spirituality, illusion",Pluto:"transformation, power, rebirth"};
+
+function AspectBadge({asp}){
+  const [open,setOpen]=useState(false);
+  const col=ASPECT_COLORS[asp.aspect.name]||"#7a6a9a";
+  const meaning=ASPECT_MEANINGS[asp.aspect.name];
+  return(<div style={{marginBottom:6}}><div onClick={()=>setOpen(o=>!o)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:"#0f0c1a",border:"1px solid #1a1530",cursor:"pointer",borderRadius:open?8:8,borderBottomLeftRadius:open?0:8,borderBottomRightRadius:open?0:8}}><span style={{fontSize:11,color:"#a09ab8"}}>{asp.p1.sym} {asp.p1.name}</span><span style={{fontSize:14,color:col,margin:"0 8px"}}>{asp.aspect.short}</span><span style={{fontSize:11,color:"#a09ab8"}}>{asp.p2.sym} {asp.p2.name}</span><span style={{fontSize:9,color:"#5a4a7a",marginLeft:"auto",paddingLeft:8,fontFamily:"'Courier New',monospace"}}>{asp.orb}°</span><span style={{fontSize:9,color:"#3a2a5a",marginLeft:8}}>{open?"▲":"▼"}</span></div>{open&&(<div style={{background:"#0c0918",border:"1px solid #1a1530",borderTop:"none",borderBottomLeftRadius:8,borderBottomRightRadius:8,padding:"12px 14px"}}><div style={{fontSize:10,color:col,letterSpacing:"0.12em",textTransform:"uppercase",fontFamily:"'Cinzel',serif",marginBottom:6}}>{asp.aspect.name}</div><p style={{fontSize:12,color:"#b0a8c8",fontFamily:"Georgia,serif",fontStyle:"italic",lineHeight:1.8,margin:"0 0 10px"}}>{meaning?.desc}</p><div style={{display:"flex",flexDirection:"column",gap:6}}>{[asp.p1,asp.p2].map(p=>(<div key={p.key} style={{background:"#13101e",borderRadius:6,padding:"7px 10px",borderLeft:`2px solid ${p.color}`}}><span style={{fontSize:10,color:p.color}}>{p.sym} {p.name}</span><span style={{fontSize:10,color:"#5a4a7a"}}> — {PLANET_KEYWORDS[p.name]||""}</span></div>))}</div><p style={{fontSize:11,color:"#7a6a9a",fontFamily:"Georgia,serif",fontStyle:"italic",lineHeight:1.7,margin:"10px 0 0"}}>{meaning?.nature}</p></div>)}</div>);
+}
+
+function PaywallCard({onSelect}){
+  return(<div><div style={{textAlign:"center",marginBottom:24}}><div style={{fontSize:28,marginBottom:10}}>✦</div><div style={{fontSize:18,color:"#e8e0f4",fontFamily:"Georgia,serif",fontStyle:"italic",marginBottom:8}}>Watch the sky move</div><div style={{fontSize:12,color:"#5a4a7a",lineHeight:1.9,fontFamily:"Georgia,serif",fontStyle:"italic"}}>Quiet alerts when something shifts —<br/>a sign change, an exact aspect,<br/>a transit touching your natal chart.</div></div><div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:20}}>{[{tier:"monthly",label:"Monthly",price:"₹299 / mo",perks:["Moon sign changes","Major transits","Transit × natal aspects"],color:"#6a4a9a"},{tier:"annual",label:"Annual",price:"₹1,999 / yr",badge:"Save 44%",perks:["Everything monthly","Minor aspects","Eclipse & retrograde notes","Priority readings"],color:"#a06830"}].map(plan=>(<div key={plan.tier} style={{background:"#0f0c1a",border:`1px solid ${plan.color}50`,borderRadius:14,padding:18,cursor:"pointer"}} onClick={()=>onSelect(plan.tier)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}><div><div style={{fontSize:12,color:plan.color,marginBottom:3,letterSpacing:"0.06em"}}>{plan.label}</div><div style={{fontSize:20,color:"#e8e0f4",fontFamily:"Georgia,serif",fontStyle:"italic"}}>{plan.price}</div></div>{plan.badge&&<span style={{fontSize:9,background:plan.color+"30",color:plan.color,padding:"3px 9px",borderRadius:10}}>{plan.badge}</span>}</div>{plan.perks.map((p,i)=>(<div key={i} style={{fontSize:11,color:"#7a6a9a",marginBottom:4}}>✦ {p}</div>))}<button style={{marginTop:12,width:"100%",background:plan.color,border:"none",borderRadius:8,color:"#fff",padding:"11px",fontSize:11,cursor:"pointer"}}>Begin →</button></div>))}</div><div style={{fontSize:10,color:"#3a2a5a",textAlign:"center"}}>via Razorpay · cancel any time</div></div>);
+}
+
+function App(){
+  const [geo,setGeo]=useState(null);
+  const [geoLoading,setGeoLoading]=useState(true);
+  const [transits,setTransits]=useState(null);
+  const [tab,setTab]=useState("daily");
+  const [selectedSign,setSelectedSign]=useState(null);
+  const [profile,setProfile]=useState(null);
+  const [natalPlanets,setNatalPlanets]=useState(null);
+  const [showProfile,setShowProfile]=useState(false);
+  const [form,setForm]=useState({name:"",dob:"",tob:"",city:"",lat:null,lon:null});
+  const [aiText,setAiText]=useState({});
+  const [aiLoading,setAiLoading]=useState(false);
+  const [dayOffset,setDayOffset]=useState(0);
+  const [patronTier,setPatronTier]=useState(null);
+  const [showPaywall,setShowPaywall]=useState(false);
+  const [citySearch,setCitySearch]=useState("");
+  const [geocoding,setGeocoding]=useState(false);
+  const [geoError,setGeoError]=useState("");
+
+  useEffect(()=>{
+    const fallback={lat:23.5590,lon:87.2711,city:"Durgapur, WB"};
+    function applyGeo(lat,lon,city){
+      setGeo({lat,lon,city});
+      const now=new Date();
+      setTransits(computeChart(now.getUTCFullYear(),now.getUTCMonth()+1,now.getUTCDate(),now.getUTCHours()+now.getUTCMinutes()/60,lat,lon));
+      setGeoLoading(false);
+    }
+    if(!navigator.geolocation){applyGeo(fallback.lat,fallback.lon,fallback.city);return;}
+    navigator.geolocation.getCurrentPosition(
+      pos=>{const{latitude:lat,longitude:lon}=pos.coords;fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`).then(r=>r.json()).then(d=>{const city=[d.address?.city||d.address?.town||d.address?.village,d.address?.state].filter(Boolean).join(", ");applyGeo(lat,lon,city||"Your Location");}).catch(()=>applyGeo(lat,lon,"Your Location"));},
+      ()=>applyGeo(fallback.lat,fallback.lon,fallback.city),
+      {timeout:8000,enableHighAccuracy:false}
+    );
+  },[]);
+
+  async function geocodeBirthCity(city){
+    if(!city)return;setGeocoding(true);setGeoError("");
+    try{
+      const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=json&limit=1`,{headers:{"Accept-Language":"en"}});
+      const d=await r.json();
+      if(d[0]){setForm(f=>({...f,lat:parseFloat(d[0].lat),lon:parseFloat(d[0].lon),city:d[0].display_name.split(",").slice(0,2).join(", ")}));setGeoError("");}
+      else{setGeoError("City not found. Try adding the country name.");}
+    }catch{
+      try{
+        const r2=await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`);
+        const d2=await r2.json();
+        if(d2.results?.[0]){const{latitude:lat,longitude:lon,name,country}=d2.results[0];setForm(f=>({...f,lat,lon,city:`${name}, ${country}`}));setGeoError("");}
+        else setGeoError("City not found.");
+      }catch{setGeoError("Could not reach location service. Enter coordinates manually.");}
+    }
+    setGeocoding(false);
+  }
+
+  function saveProfile(){
+    if(!form.name||!form.dob)return;
+    const lat=form.lat||geo?.lat||23.559,lon=form.lon||geo?.lon||87.271;
+    const[y,m,d]=form.dob.split("-").map(Number);
+    let hourUTC=12;
+    if(form.tob){const[h,min]=form.tob.split(":").map(Number);hourUTC=h+min/60-5.5;}
+    const natal=computeChart(y,m,d,hourUTC,lat,lon);
+    setProfile({...form,lat,lon});setNatalPlanets(natal);setShowProfile(false);
+    const sunSign=signOf(natal.find(pl=>pl.key==="sun").lon).sign;
+    const signIdx=SIGNS.findIndex(s=>s.name===sunSign);
+    if(signIdx>=0)fetchAiReading(signIdx,natal);
+  }
+
+  async function fetchAiReading(signIdx,natal,offset=0){
+    const sign=SIGNS[signIdx];
+    const targetDate=new Date();targetDate.setDate(targetDate.getDate()+offset);
+    const cacheKey=`${signIdx}_${targetDate.toDateString()}_d${offset}`;
+    if(aiText[cacheKey])return;
+    setAiLoading(true);
+    if(!ANTHROPIC_API_KEY){setAiText(prev=>({...prev,[cacheKey]:"Add your Anthropic API key to the top of index.html to enable AI readings."}));setAiLoading(false);return;}
+    try{
+      const dayTransits=computeChart(targetDate.getUTCFullYear(),targetDate.getUTCMonth()+1,targetDate.getUTCDate(),targetDate.getUTCHours()+targetDate.getUTCMinutes()/60,geo?.lat||23.559,geo?.lon||87.271);
+      const natalSun=natal?signOf(natal.find(p=>p.key==="sun")?.lon||0).sign:sign.name;
+      const natalMoon=natal?signOf(natal.find(p=>p.key==="moon")?.lon||0).sign:"Cancer";
+      const natalAsc=natal?signOf(natal.find(p=>p.key==="asc")?.lon||0).sign:"Scorpio";
+      const pStr=dayTransits.filter(p=>!p.isAngle).map(p=>{const{sign:sg,deg}=signOf(p.lon);return`${p.sym} ${p.name}: ${sg} ${deg}°`;}).join(" · ");
+      const aspects=getAspects(dayTransits,dayTransits,8).slice(0,6).map(a=>`${a.p1.name} ${a.aspect.short} ${a.p2.name}`).join(" · ");
+      const dateLabel=targetDate.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"});
+      const dayLabel=offset===0?"today":offset===1?"tomorrow":`in ${offset} days`;
+      const prompt=`You are a contemplative astrologer. Voice: soft, grounding, mystical — never hyped. Dense with meaning, light on words.\n\nWrite a daily reading for ${sign.name} for ${dateLabel} (${dayLabel}).\n\nNatal: Sun ${natalSun} · Moon ${natalMoon} · Rising ${natalAsc}\n\nSky on ${dateLabel}:\n${pStr}\nActive aspects: ${aspects}\n\nFormat: exactly 2 short paragraphs. First: what the sky is doing for ${sign.name} — name 2–3 transits. Second: one grounding truth to carry. No greeting. No sign name preamble. Under 110 words.`;
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":ANTHROPIC_API_KEY,"anthropic-version":"2023-06-01"},body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:500,messages:[{role:"user",content:prompt}]})});
+      const data=await res.json();
+      setAiText(prev=>({...prev,[cacheKey]:data.content?.map(b=>b.text||"").join("")||""}));
+    }catch{setAiText(prev=>({...prev,[cacheKey]:"The sky is quiet. Come back in a moment."}));}
+    setAiLoading(false);
+  }
+
+  function selectSign(idx){setSelectedSign(idx);setDayOffset(0);fetchAiReading(idx,natalPlanets,0);}
+
+  const sign=selectedSign!==null?SIGNS[selectedSign]:null;
+  const ratings=selectedSign!==null?getRatings(selectedSign,transits):null;
+  const targetDate=new Date();targetDate.setDate(targetDate.getDate()+dayOffset);
+  const aiKey=selectedSign!==null?`${selectedSign}_${targetDate.toDateString()}_d${dayOffset}`:null;
+  const transitNatalAspects=(transits&&natalPlanets&&sign)?getAspects(transits,natalPlanets,6).filter(a=>signOf(a.p1.lon).sign===sign.name||signOf(a.p2.lon).sign===sign.name):[];
+  const today=new Date().toLocaleDateString("en-IN",{weekday:"long",month:"long",day:"numeric"});
+  const S={card:{background:"#0d0a18",border:"1px solid #1a1530",borderRadius:14,padding:14,marginBottom:14},label:{fontSize:9,letterSpacing:"0.2em",color:"#5a4a7a",textTransform:"uppercase",fontFamily:"'Cinzel',serif",marginBottom:10}};
+  const planetRows=transits?(()=>{const bk=Object.fromEntries(transits.filter(p=>!p.isAngle).map(p=>[p.key,p]));return[[bk.sun,bk.moon],[bk.mercury,bk.venus,bk.mars],[bk.jupiter,bk.saturn],[bk.uranus,bk.neptune,bk.pluto]];})():[];
+
+  return(
+    <div style={{minHeight:"100vh",background:"#09070f",color:"#d4cce8",fontFamily:"Georgia,serif",maxWidth:480,margin:"0 auto",position:"relative",overflowX:"hidden"}}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Cinzel:wght@400;500&display=swap');
+        *{box-sizing:border-box;}
+        @keyframes twinkle{0%,100%{opacity:.05}50%{opacity:.45}}
+        @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes pulse{0%,100%{opacity:.3}50%{opacity:.85}}
+        .s-pill{background:#0d0a18;border:1px solid #1a1530;border-radius:12px;padding:16px 6px;cursor:pointer;text-align:center;color:inherit;transition:all 0.2s;font-family:inherit;}
+        .s-pill:hover{border-color:#3a2a6a!important;transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,0.5);}
+        .tab-btn{flex:1;padding:8px 2px;border:none;border-radius:6px;background:transparent;font-size:10px;cursor:pointer;white-space:nowrap;transition:all 0.2s;font-family:'Cinzel',serif;letter-spacing:0.04em;}
+        .tab-btn:hover{color:#c8a96e!important;}
+        .tab-btn.active{background:#1a1530;color:#c8a96e!important;border-bottom:1px solid #c8a96e;}
+        .tab-btn.inactive{color:#4a3a6a;}
+        input{font-family:inherit;}
+        ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:#0f0c1a}::-webkit-scrollbar-thumb{background:#2a2040;border-radius:2px}
+      `}</style>
+
+      <div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:0}}>
+        {Array.from({length:70}).map((_,i)=>(<div key={i} style={{position:"absolute",width:seededRand(i*13)>.85?2:1,height:seededRand(i*13)>.85?2:1,borderRadius:"50%",background:"#fff",opacity:seededRand(i*7)*.28+.04,left:`${seededRand(i*3)*100}%`,top:`${seededRand(i*5)*100}%`,animation:`twinkle ${2.5+seededRand(i)*5}s ease-in-out infinite`,animationDelay:`${seededRand(i*11)*5}s`}}/>))}
+        <div style={{position:"absolute",top:"15%",left:"10%",width:"280px",height:"200px",background:"radial-gradient(ellipse,#2a1060 0%,transparent 70%)",opacity:0.1,borderRadius:"50%"}}/>
+      </div>
+
+      <div style={{position:"sticky",top:0,zIndex:10,background:"#09070fef",backdropFilter:"blur(16px)",borderBottom:"1px solid #1a1530",padding:"16px 18px 12px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div>
+            <div style={{fontSize:9,letterSpacing:"0.3em",color:"#5a4a7a",textTransform:"uppercase",fontFamily:"'Cinzel',serif",marginBottom:3}}>✦ Your Personal Astrologer</div>
+            <div style={{fontSize:26,fontFamily:"'Cormorant Garamond',serif",fontWeight:400,fontStyle:"italic",letterSpacing:"0.08em",color:"#f0ddb0",textShadow:"0 0 18px rgba(240,200,120,0.55), 0 0 40px rgba(220,160,80,0.25)"}}>akari</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:9,color:"#4a3a6a",letterSpacing:"0.07em",fontFamily:"'Cinzel',serif"}}>{today}</div>
+            <div style={{fontSize:10,color:geo?"#c8a96e":"#5a4a7a",marginTop:3}}>{geoLoading?<span style={{animation:"pulse 1.2s infinite"}}>⊙ locating…</span>:geo?`📍 ${geo.city}`:"⊙ no location"}</div>
+            {patronTier&&<div style={{fontSize:9,color:patronTier==="annual"?"#e0a840":"#9a70d0",marginTop:2,fontFamily:"'Cinzel',serif"}}>{patronTier==="annual"?"★ Annual":"◆ Monthly"} Patron</div>}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:3}}>
+          {[{id:"daily",l:"✦ Daily"},{id:"chart",l:"◉ Sky Chart"},{id:"natal",l:"☽ My Chart"},{id:"alerts",l:"⚡ Alerts"}].map(t=>(<button key={t.id} className={`tab-btn ${tab===t.id?"active":"inactive"}`} onClick={()=>{setTab(t.id);setSelectedSign(null);}}>{t.l}</button>))}
+        </div>
+      </div>
+
+      <div style={{position:"relative",zIndex:1,padding:"18px 16px 100px"}}>
+
+        {tab==="daily"&&(
+          <div style={{animation:"fadeIn 0.35s ease"}}>
+            {!sign?(
+              <>
+                {transits&&(<div style={{...S.card,marginBottom:18}}><div style={S.label}>The Sky at a Glance</div>{planetRows.map((row,ri)=>(<div key={ri} style={{display:"flex",gap:6,marginBottom:ri<planetRows.length-1?6:0}}>{row.filter(Boolean).map(p=>{const s=signOf(p.lon),sg=SIGNS.find(x=>x.name===s.sign);return(<div key={p.key} style={{display:"flex",alignItems:"center",gap:5,flex:1,background:"#13101e",borderRadius:8,padding:"5px 9px",border:`1px solid ${p.color}20`}}><span style={{fontSize:13,color:p.color,lineHeight:1}}>{p.sym}</span><span style={{fontSize:10,color:"#4a3a6a"}}>in</span><span style={{fontSize:13,color:sg?.color||"#c8c0e0"}}>{sg?.sym}</span></div>);})}</div>))}</div>)}
+                <div style={{fontSize:9,color:"#5a4a7a",letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:20,fontFamily:"'Cinzel',serif"}}>Choose Your Sign</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>{SIGNS.map((s,i)=>(<button key={i} className="s-pill" onClick={()=>selectSign(i)}><div style={{fontSize:24,marginBottom:5,color:s.color}}>{s.sym}</div><div style={{fontSize:11,color:"#b0a8c8",fontFamily:"'Cormorant Garamond',serif",fontStyle:"italic"}}>{s.name}</div><div style={{fontSize:8,color:"#3a2a5a",marginTop:2,letterSpacing:"0.08em",fontFamily:"'Cinzel',serif"}}>{s.el}</div></button>))}</div>
+              </>
+            ):(
+              <div style={{animation:"fadeIn 0.28s ease"}}>
+                <button onClick={()=>{setSelectedSign(null);setDayOffset(0);}} style={{background:"none",border:"none",color:"#5a4a7a",cursor:"pointer",fontSize:10,letterSpacing:"0.12em",marginBottom:16,padding:0,fontFamily:"'Cinzel',serif"}}>← All Signs</button>
+                <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>
+                  <div style={{width:56,height:56,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,background:"#0d0a18",border:`1.5px solid ${sign.color}50`,boxShadow:`0 0 28px ${sign.color}18`}}>{sign.sym}</div>
+                  <div><div style={{fontSize:22,color:sign.color,fontFamily:"'Cormorant Garamond',serif",fontStyle:"italic",fontWeight:300}}>{sign.name}</div><div style={{fontSize:9,color:"#5a4a7a",fontFamily:"'Cinzel',serif",letterSpacing:"0.06em"}}>{sign.el} · {sign.ruler} · {sign.dates}</div></div>
+                  {natalPlanets&&(()=>{const nSun=signOf(natalPlanets.find(p=>p.key==="sun")?.lon||0).sign;if(nSun===sign.name)return<span style={{fontSize:9,background:"#c8a96e18",color:"#c8a96e",padding:"3px 9px",borderRadius:10,marginLeft:"auto",border:"1px solid #c8a96e30",fontFamily:"'Cinzel',serif"}}>☉ Your Sun</span>;const nMoon=signOf(natalPlanets.find(p=>p.key==="moon")?.lon||0).sign;if(nMoon===sign.name)return<span style={{fontSize:9,background:"#d0ccf018",color:"#d0ccf0",padding:"3px 9px",borderRadius:10,marginLeft:"auto",border:"1px solid #d0ccf030",fontFamily:"'Cinzel',serif"}}>☽ Your Moon</span>;return null;})()}
+                </div>
+                <div style={{display:"flex",gap:6,marginBottom:14}}>
+                  {[{d:0,l:"Today"},{d:1,l:"Tomorrow"},{d:2,l:"+2 Days"},{d:3,l:"+3 Days"}].map(({d,l})=>{const active=dayOffset===d;return(<button key={d} onClick={()=>{setDayOffset(d);fetchAiReading(selectedSign,natalPlanets,d);}} style={{flex:1,padding:"7px 2px",border:`1px solid ${active?sign.color+"60":"#1a1530"}`,borderRadius:8,background:active?"#1a1530":"transparent",color:active?sign.color:"#4a3a6a",fontSize:10,cursor:"pointer",fontFamily:"'Cinzel',serif",transition:"all 0.2s"}}>{l}</button>);})}
+                </div>
+                <div style={{...S.card,borderLeft:`3px solid ${sign.color}60`,position:"relative",overflow:"hidden"}}>
+                  <div style={{position:"absolute",top:0,right:0,width:"60%",height:"100%",background:`radial-gradient(ellipse at 80% 50%, ${sign.color}07 0%, transparent 70%)`,pointerEvents:"none"}}/>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}><span style={S.label}>{dayOffset===0?"Reading for Today":dayOffset===1?"Tomorrow's Reading":`Reading · +${dayOffset} Days`}</span><span style={{fontSize:9,color:"#3a2a5a",fontFamily:"'Cinzel',serif"}}>{targetDate.toLocaleDateString("en-IN",{month:"short",day:"numeric"})}</span></div>
+                  {aiLoading&&!aiText[aiKey]?<div style={{color:"#5a4a7a",fontSize:13,fontStyle:"italic",animation:"pulse 1.3s infinite",fontFamily:"'Cormorant Garamond',serif"}}>Reading the transits…</div>:<p style={{fontSize:14,lineHeight:2.0,color:"#c0b8d8",margin:0,fontFamily:"'Cormorant Garamond',serif",fontStyle:"italic",fontWeight:300}}>{aiText[aiKey]||"…"}</p>}
+                </div>
+                <div style={S.card}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><span style={S.label}>Today's Transit Chart</span><span style={{fontSize:9,color:"#3a2a5a",fontFamily:"'Cinzel',serif"}}>{geo?.city||"WB"}</span></div>
+                  {transits&&<div style={{display:"flex",justifyContent:"center"}}><ChartWheel transitPlanets={transits} natalPlanets={natalPlanets} highlightSign={sign.name} mode={natalPlanets?"both":"transit"}/></div>}
+                  {transits&&(()=>{const inSign=transits.filter(p=>!p.isAngle&&signOf(p.lon).sign===sign.name);return inSign.length>0?(<div style={{marginTop:10,padding:"10px 13px",background:"#13101e",borderRadius:9,border:`1px solid ${sign.color}20`}}><div style={{fontSize:9,color:sign.color,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:6,fontFamily:"'Cinzel',serif"}}>Passing Through {sign.name}</div>{inSign.map((p,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:i<inSign.length-1?"1px solid #1a1528":"none"}}><span style={{fontSize:12,color:p.color,fontFamily:"'Cormorant Garamond',serif"}}>{p.sym} {p.name}</span><span style={{fontSize:9,color:"#6a5a8a",fontFamily:"'Cinzel',serif"}}>{signOf(p.lon).deg}° {sign.el}</span></div>))}</div>):<div style={{marginTop:8,fontSize:11,color:"#3a2a5a",textAlign:"center",fontStyle:"italic",fontFamily:"'Cormorant Garamond',serif"}}>No planets in {sign.name} today</div>;})()}
+                </div>
+                {transitNatalAspects.length>0&&(<div style={S.card}><div style={S.label}>Transit × Natal Aspects</div>{transitNatalAspects.slice(0,4).map((a,i)=><AspectBadge key={i} asp={a}/>)}</div>)}
+                <div style={{...S.card,padding:"16px 18px"}}><div style={{...S.label,marginBottom:14}}>Today's Field</div>{Object.entries(ratings).map(([k,v])=><RatingBar key={k} label={k} value={v}/>)}</div>
+                <div style={{...S.card,padding:"13px 15px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>{[{label:"Element",value:sign.el},{label:"Number",value:((selectedSign+new Date().getDate())%9)+1},{label:"Best Time",value:["Dawn","Noon","Dusk","Midnight"][(selectedSign+new Date().getDate())%4]}].map(item=>(<div key={item.label} style={{textAlign:"center"}}><div style={{fontSize:8,color:"#3a2a5a",letterSpacing:"0.14em",textTransform:"uppercase",fontFamily:"'Cinzel',serif"}}>{item.label}</div><div style={{fontSize:13,color:"#c8a96e",marginTop:3,fontFamily:"'Cormorant Garamond',serif",fontStyle:"italic"}}>{item.value}</div></div>))}</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab==="chart"&&(
+          <div style={{animation:"fadeIn 0.35s ease"}}>
+            <div style={{...S.label,marginBottom:16}}>Transit Chart · {today}</div>
+            {transits?(
+              <>
+                <div style={S.card}>
+                  <div style={{display:"flex",justifyContent:"center"}}><ChartWheel transitPlanets={transits} natalPlanets={natalPlanets} mode={natalPlanets?"both":"transit"}/></div>
+                  <div style={{textAlign:"center",marginTop:6,fontSize:9,color:"#3a2a5a",fontFamily:"'Cinzel',serif"}}>📍 {geo?.city||"Durgapur, WB"}{geo?` · ${geo.lat.toFixed(2)}°N ${Math.abs(geo.lon).toFixed(2)}°E`:""}{natalPlanets&&<span style={{color:"#4a3a6a"}}> · inner = natal</span>}</div>
+                </div>
+                <div style={S.card}>
+                  <div style={S.label}>Planetary Positions</div>
+                  {planetRows.map((row,ri)=>(<div key={ri} style={{display:"flex",gap:8,marginBottom:ri<planetRows.length-1?8:0}}>{row.filter(Boolean).map(p=>{const{sign:sg,deg}=signOf(p.lon),sgd=SIGNS.find(s=>s.name===sg),nLon=natalPlanets?.find(n=>n.key===p.key)?.lon,nS=nLon!==undefined?signOf(nLon):null;return(<div key={p.key} style={{flex:1,background:"#13101e",borderRadius:10,padding:"10px 12px",border:`1px solid ${p.color}25`,position:"relative",overflow:"hidden"}}><div style={{position:"absolute",top:0,right:0,width:"40%",height:"100%",background:`radial-gradient(ellipse at 80% 50%, ${p.color}08 0%, transparent 70%)`,pointerEvents:"none"}}/><div style={{display:"flex",alignItems:"center",gap:5,marginBottom:4}}><span style={{fontSize:11,color:p.color,fontFamily:"'Cinzel',serif"}}>{p.name}</span><span style={{fontSize:15,color:p.color,lineHeight:1}}>{p.sym}</span></div><div style={{display:"flex",alignItems:"center",gap:4,marginBottom:2}}><span style={{fontSize:13,color:sgd?.color||"#c8a96e"}}>{sgd?.sym}</span><span style={{fontSize:12,color:"#c8c0e0",fontFamily:"'Cormorant Garamond',serif",fontStyle:"italic"}}>{sg}</span></div><div style={{fontSize:10,color:"#4a3a6a",fontFamily:"'Courier New',monospace"}}>{deg}°</div>{nS&&<div style={{fontSize:8,color:"#3a2a5a",marginTop:3,fontFamily:"'Cinzel',serif"}}>n: {nS.sign.slice(0,3)} {nS.deg}°</div>}</div>);})}</div>))}
+                </div>
+                <div style={S.card}><div style={S.label}>Active Aspects Today</div>{getAspects(transits,transits,8).slice(0,8).map((a,i)=><AspectBadge key={i} asp={a}/>)}</div>
+              </>
+            ):<div style={{textAlign:"center",padding:"50px 0",color:"#5a4a7a",fontStyle:"italic",animation:"pulse 1.3s infinite",fontFamily:"'Cormorant Garamond',serif",fontSize:15}}>Computing sky positions…</div>}
+          </div>
+        )}
+
+        {tab==="natal"&&(
+          <div style={{animation:"fadeIn 0.35s ease"}}>
+            {showProfile?(
+              <div>
+                <div style={{...S.label,marginBottom:18}}>Birth Details</div>
+                {[{k:"name",l:"Name",t:"text",ph:"e.g. Ananya"},{k:"dob",l:"Date of Birth",t:"date"},{k:"tob",l:"Time of Birth",t:"time"}].map(f=>(<div key={f.k} style={{marginBottom:14}}><div style={{...S.label,marginBottom:6}}>{f.l}</div><input type={f.t} placeholder={f.ph||""} value={form[f.k]||""} onChange={e=>setForm(p=>({...p,[f.k]:e.target.value}))} style={{width:"100%",background:"#0d0a18",border:"1px solid #1e1830",borderRadius:9,padding:"10px 13px",color:"#d4cce8",fontSize:13,outline:"none"}}/></div>))}
+                <div style={{marginBottom:18}}>
+                  <div style={{...S.label,marginBottom:6}}>City of Birth</div>
+                  <div style={{display:"flex",gap:8}}>
+                    <input type="text" placeholder="e.g. Kolkata, West Bengal" value={citySearch} onChange={e=>{setCitySearch(e.target.value);setGeoError("");}} onKeyDown={e=>e.key==="Enter"&&geocodeBirthCity(citySearch)} style={{flex:1,background:"#0d0a18",border:`1px solid ${geoError?"#6a2a2a":"#1e1830"}`,borderRadius:9,padding:"10px 13px",color:"#d4cce8",fontSize:13,outline:"none"}}/>
+                    <button onClick={()=>geocodeBirthCity(citySearch)} style={{background:"#1e1830",border:"1px solid #2a2050",borderRadius:9,color:"#c8a96e",padding:"10px 13px",cursor:"pointer",fontSize:11,whiteSpace:"nowrap",fontFamily:"'Cinzel',serif",minWidth:52}}>{geocoding?"…":"Locate"}</button>
+                  </div>
+                  {geoError&&<div style={{fontSize:10,color:"#9a5a5a",marginTop:6,fontStyle:"italic"}}>{geoError}</div>}
+                  {form.lat&&!geoError&&<div style={{fontSize:10,color:"#4a8a6a",marginTop:6,fontFamily:"'Cinzel',serif"}}>✓ {form.city} · {form.lat.toFixed(2)}°N {form.lon.toFixed(2)}°E</div>}
+                  {geoError&&(<div style={{marginTop:10}}><div style={{fontSize:9,color:"#5a4a7a",letterSpacing:"0.1em",textTransform:"uppercase",fontFamily:"'Cinzel',serif",marginBottom:6}}>Enter coordinates manually</div><div style={{display:"flex",gap:8}}><input type="number" placeholder="Latitude (e.g. 22.57)" step="0.01" onChange={e=>setForm(f=>({...f,lat:parseFloat(e.target.value)||null}))} style={{flex:1,background:"#0d0a18",border:"1px solid #1e1830",borderRadius:9,padding:"8px 10px",color:"#d4cce8",fontSize:12,outline:"none"}}/><input type="number" placeholder="Longitude (e.g. 88.36)" step="0.01" onChange={e=>setForm(f=>({...f,lon:parseFloat(e.target.value)||null,city:citySearch||"Custom location"}))} style={{flex:1,background:"#0d0a18",border:"1px solid #1e1830",borderRadius:9,padding:"8px 10px",color:"#d4cce8",fontSize:12,outline:"none"}}/></div></div>)}
+                </div>
+                <div style={{display:"flex",gap:8}}><button onClick={()=>setShowProfile(false)} style={{flex:1,background:"none",border:"1px solid #1e1830",borderRadius:9,color:"#5a4a7a",padding:"12px",cursor:"pointer",fontSize:12,fontFamily:"'Cinzel',serif"}}>Cancel</button><button onClick={saveProfile} style={{flex:2,background:"#5a3a8a",border:"none",borderRadius:9,color:"#fff",padding:"12px",cursor:"pointer",fontSize:12,letterSpacing:"0.06em",fontFamily:"'Cinzel',serif"}}>Calculate Chart ✦</button></div>
+              </div>
+            ):!profile?(
+              <div style={{textAlign:"center",padding:"50px 0 20px"}}>
+                <div style={{fontSize:42,marginBottom:14,opacity:0.18}}>◉</div>
+                <div style={{fontSize:17,color:"#d8d0ec",fontStyle:"italic",marginBottom:10,fontFamily:"'Cormorant Garamond',serif",fontWeight:300}}>Your natal chart awaits</div>
+                <div style={{fontSize:12,color:"#5a4a7a",lineHeight:1.9,marginBottom:28,fontFamily:"'Cormorant Garamond',serif",fontStyle:"italic"}}>Enter your birth date, time, and city for an<br/>accurate chart calculated to your exact coordinates.</div>
+                <button onClick={()=>setShowProfile(true)} style={{background:"#1a1530",border:"1px solid #3a2a6a",borderRadius:9,color:"#c8a96e",padding:"12px 28px",cursor:"pointer",fontSize:12,fontFamily:"'Cinzel',serif",letterSpacing:"0.08em"}}>Create Birth Chart</button>
+              </div>
+            ):(
+              <div style={{animation:"fadeIn 0.3s ease"}}>
+                <div style={{display:"flex",gap:8,marginBottom:16}}>{[["☉","sun","Sun"],["☽","moon","Moon"],["↑","asc","Rising"]].map(([sym,key,label])=>{const pl=natalPlanets?.find(p=>p.key===key),sg=pl?signOf(pl.lon):null,sgd=sg?SIGNS.find(s=>s.name===sg.sign):null;return(<div key={key} style={{flex:1,background:"#0d0a18",border:"1px solid #1a1530",borderRadius:11,padding:"12px 7px",textAlign:"center"}}><div style={{fontSize:14,color:"#c8a96e",marginBottom:3}}>{sym}</div><div style={{fontSize:13,color:sgd?.color||"#d4cce8",fontFamily:"'Cormorant Garamond',serif",fontStyle:"italic"}}>{sg?.sign||"—"}</div><div style={{fontSize:8,color:"#3a2a5a",letterSpacing:"0.1em",textTransform:"uppercase",marginTop:2,fontFamily:"'Cinzel',serif"}}>{label}</div></div>);})}</div>
+                <div style={S.card}><div style={S.label}>Natal Chart + Today's Transits</div><div style={{display:"flex",justifyContent:"center"}}><ChartWheel transitPlanets={transits||natalPlanets} natalPlanets={natalPlanets} mode="both"/></div><div style={{textAlign:"center",marginTop:6,fontSize:9,color:"#3a2a5a",fontFamily:"'Cinzel',serif"}}>outer ring = today's sky · inner ring = your natal</div></div>
+                <div style={{...S.card,overflow:"hidden",padding:0}}><div style={{...S.label,padding:"11px 15px 0",marginBottom:8}}>Natal Positions · {profile.city||"Unknown"} · {profile.dob}</div>{natalPlanets?.filter(p=>!p.isAngle).map((p,i)=>{const{sign:sg,deg}=signOf(p.lon),sgd=SIGNS.find(s=>s.name===sg);return(<div key={i} style={{display:"grid",gridTemplateColumns:"22px 82px 1fr",alignItems:"center",padding:"8px 15px",borderBottom:i<9?"1px solid #110e1c":"none",gap:8}}><span style={{fontSize:13,color:p.color}}>{p.sym}</span><span style={{fontSize:11,color:"#7a6a9a",fontFamily:"'Cormorant Garamond',serif"}}>{p.name}</span><span style={{fontSize:11,color:sgd?.color||"#c8a96e"}}>{sgd?.sym} {sg} {deg}°</span></div>);})}</div>
+                {transits&&natalPlanets&&(<div style={S.card}><div style={S.label}>Transits Activating Your Chart Now</div>{getAspects(transits,natalPlanets,6).slice(0,6).map((a,i)=><AspectBadge key={i} asp={a}/>)}</div>)}
+                <button onClick={()=>setShowProfile(true)} style={{width:"100%",background:"none",border:"1px solid #1e1830",borderRadius:9,color:"#5a4a7a",padding:"11px",cursor:"pointer",fontSize:11,fontFamily:"'Cinzel',serif",letterSpacing:"0.06em"}}>✎ Edit birth details</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab==="alerts"&&(
+          <div style={{animation:"fadeIn 0.35s ease"}}>
+            {!patronTier&&!showPaywall?(
+              <div>
+                <div style={{background:"linear-gradient(135deg,#1a1040,#0f0a1e)",border:"1px solid #3a2a60",borderRadius:16,padding:22,marginBottom:18,textAlign:"center"}}>
+                  <div style={{fontSize:28,marginBottom:10}}>⚡</div>
+                  <div style={{fontSize:17,color:"#e8e0f4",fontStyle:"italic",marginBottom:8,fontFamily:"'Cormorant Garamond',serif",fontWeight:300}}>Watch the sky shift</div>
+                  <div style={{fontSize:12,color:"#5a4a7a",lineHeight:2,marginBottom:18,fontFamily:"'Cormorant Garamond',serif",fontStyle:"italic"}}>A quiet alert when Venus changes signs,<br/>Saturn forms an exact aspect,<br/>or the Moon touches your natal chart.</div>
+                  <div style={{display:"flex",gap:7,justifyContent:"center",marginBottom:18,flexWrap:"wrap"}}>{["Moon sign changes","Planet ingresses","Exact conjunctions","Eclipse windows","Retrograde stations"].map(f=>(<span key={f} style={{fontSize:10,color:"#8a7aaa",background:"#1a1530",padding:"4px 11px",borderRadius:12,border:"1px solid #2a1a50"}}>✓ {f}</span>))}</div>
+                  <button onClick={()=>setShowPaywall(true)} style={{background:"linear-gradient(135deg,#5a3a8a,#8a5a30)",border:"none",borderRadius:9,color:"#fff",padding:"12px 32px",cursor:"pointer",fontSize:12,letterSpacing:"0.08em",fontFamily:"'Cinzel',serif"}}>Unlock Transit Alerts ✦</button>
+                </div>
+                <div style={{...S.label,marginBottom:12}}>Upcoming Transits Preview</div>
+                {TRANSIT_EVENTS.slice(0,4).map((t,i)=>(<div key={i} style={{...S.card,marginBottom:9,filter:i>1?"blur(3px)":"none",pointerEvents:i>1?"none":"auto"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}><span style={{fontSize:12,color:"#a09ab8",fontFamily:"'Cormorant Garamond',serif"}}>{t.planet} <span style={{color:"#c8c0e0"}}>{t.event}</span></span><span style={{fontSize:9,color:t.intensity==="major"?"#c8a96e":t.intensity==="moderate"?"#7a6a9a":"#3a3060",background:"#13101e",padding:"2px 8px",borderRadius:6,letterSpacing:"0.07em",fontFamily:"'Cinzel',serif"}}>{t.intensity}</span></div><div style={{fontSize:9,color:"#3a3060",fontFamily:"'Cinzel',serif",marginBottom:4}}>{t.date}</div><div style={{fontSize:11,color:"#6a5a8a",fontStyle:"italic",fontFamily:"'Cormorant Garamond',serif",lineHeight:1.7}}>{t.note}</div></div>))}
+              </div>
+            ):showPaywall?(<PaywallCard onSelect={tier=>{setPatronTier(tier);setShowPaywall(false);}}/>):(
+              <div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><span style={S.label}>Transit Calendar · Jun–Jul 2026</span><span style={{fontSize:9,color:patronTier==="annual"?"#e0a840":"#9a70d0",background:"#1a1530",padding:"3px 10px",borderRadius:10,fontFamily:"'Cinzel',serif"}}>{patronTier==="annual"?"★ Annual":"◆ Monthly"} · Full Access</span></div>
+                {TRANSIT_EVENTS.map((t,i)=>{const isM=t.intensity==="major";return(<div key={i} style={{...S.card,marginBottom:9,borderLeft:`3px solid ${isM?"#c8a96e":t.intensity==="moderate"?"#5a3a7a":"#1e1530"}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:3}}><span style={{fontSize:12,color:"#a09ab8",fontFamily:"'Cormorant Garamond',serif"}}>{t.planet} <span style={{color:"#c8c0e0"}}>{t.event}</span></span><span style={{fontSize:9,color:isM?"#c8a96e":t.intensity==="moderate"?"#7a6a9a":"#4a3a6a",background:"#13101e",padding:"2px 8px",borderRadius:6,letterSpacing:"0.07em",flexShrink:0,marginLeft:8,fontFamily:"'Cinzel',serif"}}>{t.intensity}</span></div><div style={{fontSize:9,color:"#3a3060",marginBottom:5,fontFamily:"'Cinzel',serif"}}>{t.date}</div><div style={{fontSize:12,color:"#7a6a9a",fontStyle:"italic",fontFamily:"'Cormorant Garamond',serif",lineHeight:1.8}}>{t.note}</div></div>);})}
+                <button onClick={()=>{setPatronTier(null);setShowPaywall(false);}} style={{width:"100%",background:"none",border:"1px solid #1a1530",borderRadius:9,color:"#5a4a7a",padding:"11px",cursor:"pointer",fontSize:10,marginTop:8,fontFamily:"'Cinzel',serif"}}>Manage subscription</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
